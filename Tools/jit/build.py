@@ -6,6 +6,7 @@ import sys
 
 import _targets
 
+
 if __name__ == "__main__":
     comment = f"$ {shlex.join([sys.executable] + sys.argv)}"
     parser = argparse.ArgumentParser(description=__doc__)
