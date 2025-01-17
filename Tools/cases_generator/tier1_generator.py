@@ -158,7 +158,8 @@ def generate_tier1(
             out.emit(unused_guard)
         elif not inst.properties.no_save_ip:
             out.emit(f"frame->instr_ptr = next_instr;\n")
-        out.emit(f"next_instr += {inst.size};\n")
+        if not inst.properties.no_advance_ip:
+            out.emit(f"next_instr += {inst.size};\n")
         out.emit(f"INSTRUCTION_STATS({name});\n")
         if inst.is_target:
             out.emit(f"PREDICTED({name});\n")

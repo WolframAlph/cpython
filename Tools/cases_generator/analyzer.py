@@ -29,6 +29,7 @@ class Properties:
     const_oparg: int = -1
     needs_prev: bool = False
     no_save_ip: bool = False
+    no_advance_ip: bool = False
 
     def dump(self, indent: str) -> None:
         simple_properties = self.__dict__.copy()
@@ -64,6 +65,7 @@ class Properties:
             pure=all(p.pure for p in properties),
             needs_prev=any(p.needs_prev for p in properties),
             no_save_ip=all(p.no_save_ip for p in properties),
+            no_advance_ip=all(p.no_advance_ip for p in properties),
         )
 
     @property
@@ -89,6 +91,7 @@ SKIP_PROPERTIES = Properties(
     side_exit=False,
     pure=True,
     no_save_ip=False,
+    no_advance_ip=False,
 )
 
 
@@ -841,6 +844,7 @@ def compute_properties(op: parser.InstDef) -> Properties:
         has_free=has_free,
         pure="pure" in op.annotations,
         no_save_ip="no_save_ip" in op.annotations,
+        no_advance_ip="no_advance_ip" in op.annotations,
         tier=tier_variable(op),
         needs_prev=variable_used(op, "prev_instr"),
     )
