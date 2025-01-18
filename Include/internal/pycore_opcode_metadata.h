@@ -409,6 +409,8 @@ int _PyOpcode_num_popped(int opcode, int oparg)  {
             return 0;
         case RETURN_GENERATOR:
             return 0;
+        case RETURN_NONE:
+            return 0;
         case RETURN_VALUE:
             return 1;
         case SEND:
@@ -879,6 +881,8 @@ int _PyOpcode_num_pushed(int opcode, int oparg)  {
         case RESUME_CHECK:
             return 0;
         case RETURN_GENERATOR:
+            return 1;
+        case RETURN_NONE:
             return 1;
         case RETURN_VALUE:
             return 1;
@@ -1743,6 +1747,10 @@ int _PyOpcode_max_stack_effect(int opcode, int oparg, int *effect)  {
             *effect = 1;
             return 0;
         }
+        case RETURN_NONE: {
+            *effect = 1;
+            return 0;
+        }
         case RETURN_VALUE: {
             *effect = 0;
             return 0;
@@ -2172,6 +2180,7 @@ const struct opcode_metadata _PyOpcode_opcode_metadata[266] = {
     [RESUME] = { true, INSTR_FMT_IB, HAS_ARG_FLAG | HAS_EVAL_BREAK_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG },
     [RESUME_CHECK] = { true, INSTR_FMT_IX, HAS_DEOPT_FLAG },
     [RETURN_GENERATOR] = { true, INSTR_FMT_IX, HAS_ERROR_FLAG | HAS_ESCAPES_FLAG },
+    [RETURN_NONE] = { true, INSTR_FMT_IX, 0 },
     [RETURN_VALUE] = { true, INSTR_FMT_IX, 0 },
     [SEND] = { true, INSTR_FMT_IBC, HAS_ARG_FLAG | HAS_JUMP_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG },
     [SEND_GEN] = { true, INSTR_FMT_IBC, HAS_ARG_FLAG | HAS_DEOPT_FLAG },
@@ -2375,6 +2384,7 @@ _PyOpcode_macro_expansion[256] = {
     [PUSH_NULL] = { .nuops = 1, .uops = { { _PUSH_NULL, 0, 0 } } },
     [RESUME_CHECK] = { .nuops = 1, .uops = { { _RESUME_CHECK, 0, 0 } } },
     [RETURN_GENERATOR] = { .nuops = 1, .uops = { { _RETURN_GENERATOR, 0, 0 } } },
+    [RETURN_NONE] = { .nuops = 1, .uops = { { _RETURN_NONE, 0, 0 } } },
     [RETURN_VALUE] = { .nuops = 1, .uops = { { _RETURN_VALUE, 0, 0 } } },
     [SEND_GEN] = { .nuops = 3, .uops = { { _CHECK_PEP_523, 0, 0 }, { _SEND_GEN_FRAME, 0, 0 }, { _PUSH_FRAME, 0, 0 } } },
     [SETUP_ANNOTATIONS] = { .nuops = 1, .uops = { { _SETUP_ANNOTATIONS, 0, 0 } } },
@@ -2606,6 +2616,7 @@ const char *_PyOpcode_OpName[266] = {
     [RESUME] = "RESUME",
     [RESUME_CHECK] = "RESUME_CHECK",
     [RETURN_GENERATOR] = "RETURN_GENERATOR",
+    [RETURN_NONE] = "RETURN_NONE",
     [RETURN_VALUE] = "RETURN_VALUE",
     [SEND] = "SEND",
     [SEND_GEN] = "SEND_GEN",
@@ -2862,6 +2873,7 @@ const uint8_t _PyOpcode_Deopt[256] = {
     [RESUME] = RESUME,
     [RESUME_CHECK] = RESUME,
     [RETURN_GENERATOR] = RETURN_GENERATOR,
+    [RETURN_NONE] = RETURN_NONE,
     [RETURN_VALUE] = RETURN_VALUE,
     [SEND] = SEND,
     [SEND_GEN] = SEND,
@@ -2906,7 +2918,6 @@ const uint8_t _PyOpcode_Deopt[256] = {
 #endif // NEED_OPCODE_METADATA
 
 #define EXTRA_CASES \
-    case 118: \
     case 119: \
     case 120: \
     case 121: \

@@ -1123,6 +1123,23 @@ dummy_func(
             LLTRACE_RESUME_FRAME();
         }
 
+        inst(RETURN_NONE, (-- res)) {
+            #if TIER_ONE
+            assert(frame != &entry_frame);
+            #endif
+            SAVE_STACK();
+            assert(EMPTY());
+            _Py_LeaveRecursiveCallPy(tstate);
+            // GH-99729: We need to unlink the frame *before* clearing it:
+            _PyInterpreterFrame *dying = frame;
+            frame = tstate->current_frame = dying->previous;
+            _PyEval_FrameClearAndPop(tstate, dying);
+            RELOAD_STACK();
+            LOAD_IP(frame->return_offset);
+            res = PyStackRef_FromPyObjectImmortal(Py_None);
+            LLTRACE_RESUME_FRAME();
+        }
+
         tier1 op(_RETURN_VALUE_EVENT, (val -- val)) {
             int err = _Py_call_instrumentation_arg(
                     tstate, PY_MONITORING_EVENT_PY_RETURN,

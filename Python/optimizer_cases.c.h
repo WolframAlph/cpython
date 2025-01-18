@@ -743,6 +743,15 @@
             break;
         }
 
+        case _RETURN_NONE: {
+            _Py_UopsSymbol *res;
+            res = sym_new_not_null(ctx);
+            stack_pointer[0] = res;
+            stack_pointer += 1;
+            assert(WITHIN_STACK_BOUNDS());
+            break;
+        }
+
         case _GET_AITER: {
             _Py_UopsSymbol *iter;
             iter = sym_new_not_null(ctx);
