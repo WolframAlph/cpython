@@ -2585,6 +2585,28 @@ resolve_line_numbers(cfg_builder *g, int firstlineno)
     return SUCCESS;
 }
 
+static int insert_return_none(cfg_builder *g, PyObject *consts) {
+    // WHY LOAD_CONST CREATES NEW BASIC BLOCK???
+    for (basicblock *b = g->g_entryblock; b != NULL; b = b->b_next) {
+        for (int i = 0; i < b->b_iused; i++) {
+            cfg_instr *inst = &b->b_instr[i];
+            int nextop = i+1 < b->b_iused ? b->b_instr[i+1].i_opcode : 0;
+            if (inst->i_opcode == LOAD_CONST && nextop == RETURN_VALUE) {
+                PyObject *o = PyList_GetItem(consts, inst->i_oparg);
+                if (Py_Is(o, Py_None)) {
+                    inst->i_opcode = RETURN_NONE;
+                    inst->i_oparg = 0;
+                    b->b_instr[i+1].i_opcode = NOP;
+                    b->b_instr[i+1].i_oparg = 0;
+                }
+            }
+        }
+    }
+    int res = remove_redundant_nops(g);
+    assert(no_redundant_nops(g));
+    return res;
+}
+
 int
 _PyCfg_OptimizeCodeUnit(cfg_builder *g, PyObject *consts, PyObject *const_cache,
                         int nlocals, int nparams, int firstlineno)
@@ -2603,6 +2625,7 @@ _PyCfg_OptimizeCodeUnit(cfg_builder *g, PyObject *consts, PyObject *const_cache,
         add_checks_for_loads_of_uninitialized_variables(
             g->g_entryblock, nlocals, nparams));
     RETURN_IF_ERROR(insert_superinstructions(g));
+    RETURN_IF_ERROR(insert_return_none(g, consts));
 
     RETURN_IF_ERROR(push_cold_blocks_to_end(g));
     RETURN_IF_ERROR(resolve_line_numbers(g, firstlineno));

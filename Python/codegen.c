@@ -6205,9 +6205,8 @@ _PyCodegen_AddReturnAtEnd(compiler *c, int addNone)
      * This also ensures that no jump target offsets are out of bounds.
      */
     if (addNone) {
-        ADDOP(c, NO_LOCATION, RETURN_NONE);
-    } else {
-        ADDOP(c, NO_LOCATION, RETURN_VALUE);
+        ADDOP_LOAD_CONST(c, NO_LOCATION, Py_None);
     }
+    ADDOP(c, NO_LOCATION, RETURN_VALUE);
     return SUCCESS;
 }
