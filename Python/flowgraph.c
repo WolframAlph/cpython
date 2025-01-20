@@ -69,6 +69,8 @@ typedef struct _PyCfgBasicblock {
     unsigned b_cold : 1;
     /* b_warm is used by the cold-detection algorithm to mark blocks which are definitely not cold */
     unsigned b_warm : 1;
+
+    unsigned b_is_target : 1;
 } basicblock;
 
 
@@ -170,6 +172,7 @@ cfg_builder_new_block(cfg_builder *g)
     b->b_list = g->g_block_list;
     g->g_block_list = b;
     b->b_label = NO_LABEL;
+    b->b_is_target = 0;
     return b;
 }
 
@@ -2607,6 +2610,46 @@ static int insert_return_none(cfg_builder *g, PyObject *consts) {
     return res;
 }
 
+static int insert_return_none_adjacent_blocks(cfg_builder *g, PyObject *consts) {
+    basicblock *prev_block = g->g_entryblock;
+    basicblock *curr_block = prev_block->b_next;
+
+    for (basicblock *b = g->g_entryblock; b != NULL; b = b->b_next) {
+        for (int i = 0; i < b->b_iused; i++) {
+            cfg_instr *inst = &b->b_instr[i];
+            if (inst->i_target != NULL) {
+                inst->i_target->b_is_target = 1;
+            }
+        }
+    }
+
+    for (; curr_block != NULL; prev_block = curr_block, curr_block = curr_block->b_next) {
+        if (prev_block->b_iused < 1) {
+            continue;
+        }
+        cfg_instr *prev_inst = &prev_block->b_instr[prev_block->b_iused-1];
+        if (prev_inst->i_opcode == LOAD_CONST) {
+            PyObject *o = PyList_GetItem(consts, prev_inst->i_oparg);
+            if (Py_Is(o, Py_None)) {
+                if (curr_block->b_iused >= 1) {
+                    cfg_instr *curr_instr = &curr_block->b_instr[0];
+                    if (curr_instr->i_opcode == RETURN_VALUE) {
+                        assert(curr_block->b_iused == 1);
+                        if (curr_block->b_is_target) {
+                            /* CURRENT RETURN_VALUE IS TARGET */
+                            continue;
+                        }
+                        prev_inst->i_opcode = RETURN_NONE;
+                        prev_inst->i_oparg = 0;
+                        curr_block->b_iused--;
+                    }
+                }
+            }
+        }
+    }
+    return 1;
+}
+
 int
 _PyCfg_OptimizeCodeUnit(cfg_builder *g, PyObject *consts, PyObject *const_cache,
                         int nlocals, int nparams, int firstlineno)
@@ -2629,6 +2672,7 @@ _PyCfg_OptimizeCodeUnit(cfg_builder *g, PyObject *consts, PyObject *const_cache,
 
     RETURN_IF_ERROR(push_cold_blocks_to_end(g));
     RETURN_IF_ERROR(resolve_line_numbers(g, firstlineno));
+    RETURN_IF_ERROR(insert_return_none_adjacent_blocks(g, consts));
     // temporarily remove assert. See https://github.com/python/cpython/issues/125845
     // assert(all_exits_have_lineno(g->g_entryblock));
     return SUCCESS;
