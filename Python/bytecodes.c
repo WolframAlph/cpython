@@ -62,6 +62,7 @@
 #define replicate(TIMES)
 #define tier1
 #define no_save_ip
+#define no_advance_ip
 
 // Dummy variables for stack effects.
 static PyObject *value, *value1, *value2, *left, *right, *res, *sum, *prod, *sub;

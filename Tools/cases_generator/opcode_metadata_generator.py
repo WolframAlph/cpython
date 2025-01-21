@@ -54,6 +54,7 @@ FLAGS = [
     "OPARG_AND_1",
     "ERROR_NO_POP",
     "NO_SAVE_IP",
+    "NO_ADVANCE_IP"
 ]
 
 
@@ -287,7 +288,7 @@ def generate_metadata_table(analysis: Analysis, out: CWriter) -> None:
     out.emit("struct opcode_metadata {\n")
     out.emit("uint8_t valid_entry;\n")
     out.emit("uint8_t instr_format;\n")
-    out.emit("uint16_t flags;\n")
+    out.emit("uint32_t flags;\n")
     out.emit("};\n\n")
     out.emit(
         f"extern const struct opcode_metadata _PyOpcode_opcode_metadata[{table_size}];\n"
