@@ -1105,7 +1105,7 @@ dummy_func(
         // The stack effect here is a bit misleading.
         // retval is popped from the stack, but res
         // is pushed to a different frame, the callers' frame.
-        inst(RETURN_VALUE, (retval -- res)) {
+        no_advance_ip no_save_ip inst(RETURN_VALUE, (retval -- res)) {
             #if TIER_ONE
             assert(frame != &entry_frame);
             #endif
@@ -1124,7 +1124,7 @@ dummy_func(
             LLTRACE_RESUME_FRAME();
         }
 
-        inst(RETURN_NONE, (-- res)) {
+        no_advance_ip no_save_ip inst(RETURN_NONE, (-- res)) {
             #if TIER_ONE
             assert(frame != &entry_frame);
             #endif

@@ -7211,8 +7211,6 @@
         }
 
         TARGET(RETURN_NONE) {
-            frame->instr_ptr = next_instr;
-            next_instr += 1;
             INSTRUCTION_STATS(RETURN_NONE);
             _PyStackRef res;
             #if TIER_ONE
@@ -7236,8 +7234,6 @@
         }
 
         TARGET(RETURN_VALUE) {
-            frame->instr_ptr = next_instr;
-            next_instr += 1;
             INSTRUCTION_STATS(RETURN_VALUE);
             _PyStackRef retval;
             _PyStackRef res;
