@@ -1303,6 +1303,30 @@ compute_code_flags(compiler *c)
     return flags;
 }
 
+#include "pycore_opcode_metadata.h"
+
+void dump_inst_seq(_PyInstructionSequence *seq) {
+    for (int i = 1; i < seq->s_used; i++) {
+        _PyInstruction *inst = &seq->s_instrs[i];
+        printf("opcode=%s, oparg=%d, loc=%d\n", _PyOpcode_OpName[inst->i_opcode], inst->i_oparg, inst->i_loc.lineno);
+    }
+}
+
+void ensure_return_none(PyObject *filename, _PyInstructionSequence *seq, PyObject *consts) {
+    for (int i = 1; i < seq->s_used; i++) {
+        _PyInstruction *prev = &seq->s_instrs[i-1];
+        _PyInstruction *curr = &seq->s_instrs[i];
+        if (prev->i_opcode == LOAD_CONST) {
+            if (Py_Is(PyList_GetItem(consts, prev->i_oparg), Py_None) && curr->i_opcode == RETURN_VALUE) {
+                PyObject_Print(filename, stdout, 0);
+                printf("\n");
+                dump_inst_seq(seq);
+                assert(0);
+            }
+        }
+    }
+}
+
 static PyCodeObject *
 optimize_and_assemble_code_unit(struct compiler_unit *u, PyObject *const_cache,
                                 int code_flags, PyObject *filename)
@@ -1336,6 +1360,8 @@ optimize_and_assemble_code_unit(struct compiler_unit *u, PyObject *const_cache,
                                                  &optimized_instrs) < 0) {
         goto error;
     }
+
+    ensure_return_none(filename, &optimized_instrs, consts);
 
     /** Assembly **/
     co = _PyAssemble_MakeCodeObject(&u->u_metadata, const_cache, consts,

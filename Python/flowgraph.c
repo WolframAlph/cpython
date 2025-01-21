@@ -2589,7 +2589,6 @@ resolve_line_numbers(cfg_builder *g, int firstlineno)
 }
 
 static int insert_return_none(cfg_builder *g, PyObject *consts) {
-    // WHY LOAD_CONST CREATES NEW BASIC BLOCK???
     for (basicblock *b = g->g_entryblock; b != NULL; b = b->b_next) {
         for (int i = 0; i < b->b_iused; i++) {
             cfg_instr *inst = &b->b_instr[i];
@@ -2635,13 +2634,11 @@ static int insert_return_none_adjacent_blocks(cfg_builder *g, PyObject *consts) 
                     cfg_instr *curr_instr = &curr_block->b_instr[0];
                     if (curr_instr->i_opcode == RETURN_VALUE) {
                         assert(curr_block->b_iused == 1);
-                        if (curr_block->b_is_target) {
-                            /* CURRENT RETURN_VALUE IS TARGET */
-                            continue;
-                        }
                         prev_inst->i_opcode = RETURN_NONE;
                         prev_inst->i_oparg = 0;
-                        curr_block->b_iused--;
+                        if (!curr_block->b_is_target) {
+                            curr_block->b_iused--;
+                        }
                     }
                 }
             }
