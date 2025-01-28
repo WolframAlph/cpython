@@ -1916,6 +1916,154 @@ remove_redundant_nops_and_jumps(cfg_builder *g)
     return SUCCESS;
 }
 
+// LOOP UNROLLING
+static basicblock *duplicate_simple_loop_body(cfg_builder *g, basicblock *b, int n) {
+    basicblock *unrolled = cfg_builder_new_block(g);
+    for (int i = 0; i < n; i++) {
+            basicblock_addop(unrolled, LOAD_SMALL_INT, i, b->b_instr[0].i_loc);
+        int skip_last_jump = b->b_iused - 1;
+        for (int j = 0; j < skip_last_jump; j++) {
+            cfg_instr *inst = &b->b_instr[j];
+            basicblock_addop(unrolled, inst->i_opcode, inst->i_oparg, inst->i_loc);
+        }
+    }
+    return unrolled;
+}
+
+static bool is_simple_loop_prologue(basicblock *b) {
+    assert(b != NULL);
+    int last = b->b_iused - 1;
+    return last >= 4
+            && b->b_instr[last-4].i_opcode == LOAD_GLOBAL
+            && b->b_instr[last-3].i_opcode == PUSH_NULL
+            && b->b_instr[last-2].i_opcode == LOAD_SMALL_INT
+            && b->b_instr[last-1].i_opcode == CALL
+            && b->b_instr[last].i_opcode == GET_ITER;
+}
+
+static bool is_simple_loop_epilogue(basicblock *b) {
+    assert(b != NULL);
+    return b->b_iused >= 2
+            && b->b_instr[0].i_opcode == END_FOR
+            && b->b_instr[1].i_opcode == POP_ITER;
+}
+
+static bool is_simple_loop_body(basicblock *body, basicblock *for_iter) {
+    assert(body != NULL);
+    assert(for_iter != NULL);
+    cfg_instr *last = basicblock_last_instr(body);
+    return last != NULL
+            && last->i_opcode == JUMP
+            && last->i_target == for_iter
+            && body->b_instr[0].i_opcode == STORE_FAST;
+}
+
+static bool has_one_jump(cfg_builder *g, basicblock *for_iter) {
+    int cnt = 0;
+    for (basicblock *b = g->g_entryblock; b != NULL; b = b->b_next) {
+        for (int i = 0; i < b->b_iused; i++) {
+            cfg_instr *instr = &b->b_instr[i];
+            cnt += instr->i_target == for_iter;
+        }
+    }
+    return cnt == 1;
+}
+
+static bool is_simple_loop(cfg_builder *g, basicblock *prologue, basicblock *for_iter) {
+    assert(for_iter != NULL);
+    if (for_iter->b_iused != 1 || for_iter->b_instr[0].i_opcode != FOR_ITER) {
+        return false;
+    }
+    if (!is_simple_loop_prologue(prologue)) {
+        return false;
+    }
+    basicblock *epilogue = for_iter->b_instr[0].i_target;
+    if (!is_simple_loop_epilogue(epilogue)) {
+        return false;
+    }
+    basicblock *body = for_iter->b_next;
+    if (!is_simple_loop_body(body, for_iter)) {
+        return false;
+    }
+    return has_one_jump(g, for_iter);
+}
+
+static int get_loop_iteration_count(basicblock *prologue) {
+    assert(prologue != NULL);
+    int last = prologue->b_iused - 1;
+    cfg_instr *load_small_int = &prologue->b_instr[last-2];
+    assert(load_small_int->i_opcode == LOAD_SMALL_INT);
+    return load_small_int->i_oparg;
+}
+
+static void
+unroll_simple_loop(cfg_builder *g, basicblock *prologue, basicblock* for_iter, basicblock *body, basicblock *epilogue) {
+    int n = get_loop_iteration_count(prologue);
+    basicblock *unrolled = duplicate_simple_loop_body(g, body, n);
+    body->b_iused = 0;
+    for_iter->b_iused = 0;
+    prologue->b_iused -= 5;
+    epilogue->b_instr[0].i_opcode = NOP;
+    epilogue->b_instr[1].i_opcode = NOP;
+
+    unrolled->b_next = epilogue;
+    body->b_next = unrolled;
+}
+
+static int is_simple_range_loop(cfg_builder *g, basicblock *prologue, basicblock *for_iter, PyObject *names, bool *res) {
+    if (!is_simple_loop(g, prologue, for_iter)) {
+        goto is_false;
+    }
+    PyObject *idx;
+    PyObject *range_name = PyUnicode_FromString("range");
+    int err = PyDict_GetItemRef(names, range_name, &idx);
+
+    Py_DECREF(range_name);
+    if (idx == NULL) {
+        if (err == -1)
+            return ERROR;
+        goto is_false;
+    }
+    int arg = PyLong_AsInt(idx);
+    if (arg == -1 && PyErr_Occurred()) {
+        return ERROR;
+    }
+    Py_XDECREF(idx);
+    int last = prologue->b_iused - 1;
+    cfg_instr *load_global = &prologue->b_instr[last-4];
+    assert(load_global->i_opcode == LOAD_GLOBAL);
+    if (load_global->i_oparg != arg) {
+        goto is_false;
+    }
+
+    *res = true;
+    return SUCCESS;
+
+is_false:
+    *res = false;
+    return SUCCESS;
+}
+
+static int unroll_loops(cfg_builder *g, PyObject *names) {
+    if (names == NULL) {
+        return SUCCESS;
+    }
+    basicblock *prologue = g->g_entryblock;
+    assert(prologue != NULL);
+    basicblock *for_iter = prologue->b_next;
+    bool res;
+    for (;for_iter != NULL; prologue = for_iter, for_iter = for_iter->b_next) {
+        RETURN_IF_ERROR(is_simple_range_loop(g, prologue, for_iter, names, &res));
+        if (res) {
+            unroll_simple_loop(g, prologue, for_iter, for_iter->b_next, for_iter->b_instr[0].i_target);
+            printf("UNROLLED\n");
+        }
+    }
+    return SUCCESS;
+}
+// LOOP UNROLLING
+
+
 /* Perform optimizations on a control flow graph.
    The consts object should still be in list form to allow new constants
    to be appended.
@@ -1924,7 +2072,7 @@ remove_redundant_nops_and_jumps(cfg_builder *g)
    NOPs.  Later those NOPs are removed.
 */
 static int
-optimize_cfg(cfg_builder *g, PyObject *consts, PyObject *const_cache, int firstlineno)
+optimize_cfg(cfg_builder *g, PyObject *consts, PyObject *const_cache, PyObject *names, int firstlineno)
 {
     assert(PyDict_CheckExact(const_cache));
     RETURN_IF_ERROR(check_cfg(g));
@@ -1937,6 +2085,8 @@ optimize_cfg(cfg_builder *g, PyObject *consts, PyObject *const_cache, int firstl
     }
     RETURN_IF_ERROR(remove_redundant_nops_and_pairs(g->g_entryblock));
     RETURN_IF_ERROR(remove_unreachable(g->g_entryblock));
+    RETURN_IF_ERROR(remove_redundant_nops_and_jumps(g));
+    RETURN_IF_ERROR(unroll_loops(g, names));
     RETURN_IF_ERROR(remove_redundant_nops_and_jumps(g));
     assert(no_redundant_jumps(g));
     return SUCCESS;
@@ -2587,7 +2737,7 @@ resolve_line_numbers(cfg_builder *g, int firstlineno)
 
 int
 _PyCfg_OptimizeCodeUnit(cfg_builder *g, PyObject *consts, PyObject *const_cache,
-                        int nlocals, int nparams, int firstlineno)
+                        int nlocals, int nparams, int firstlineno, PyObject *names)
 {
     assert(cfg_builder_check(g));
     /** Preprocessing **/
@@ -2597,7 +2747,7 @@ _PyCfg_OptimizeCodeUnit(cfg_builder *g, PyObject *consts, PyObject *const_cache,
     RETURN_IF_ERROR(label_exception_targets(g->g_entryblock));
 
     /** Optimization **/
-    RETURN_IF_ERROR(optimize_cfg(g, consts, const_cache, firstlineno));
+    RETURN_IF_ERROR(optimize_cfg(g, consts, const_cache, names, firstlineno));
     RETURN_IF_ERROR(remove_unused_consts(g->g_entryblock, consts));
     RETURN_IF_ERROR(
         add_checks_for_loads_of_uninitialized_variables(
@@ -3014,7 +3164,7 @@ _PyCompile_OptimizeCfg(PyObject *seq, PyObject *consts, int nlocals)
     }
     int nparams = 0, firstlineno = 1;
     if (_PyCfg_OptimizeCodeUnit(g, consts, const_cache, nlocals,
-                                nparams, firstlineno) < 0) {
+                                nparams, firstlineno, NULL) < 0) {
         goto error;
     }
     res = cfg_to_instruction_sequence(g);
