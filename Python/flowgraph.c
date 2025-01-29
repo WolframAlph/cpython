@@ -2030,7 +2030,6 @@ unroll_simple_loop(cfg_builder *g, basicblock *prologue, basicblock* for_iter, b
             }
         }
     }
-    printf("UNROLLED\n");
 }
 
 static int is_simple_range_loop(cfg_builder *g, basicblock *prologue, basicblock *for_iter, PyObject *names, bool *res) {
