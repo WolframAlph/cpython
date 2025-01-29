@@ -1933,9 +1933,8 @@ static basicblock *duplicate_simple_loop_body(cfg_builder *g, basicblock *b, int
 static bool is_simple_loop_prologue(basicblock *b) {
     assert(b != NULL);
     int last = b->b_iused - 1;
-    return last >= 4
-            && b->b_instr[last-4].i_opcode == LOAD_GLOBAL
-            && b->b_instr[last-3].i_opcode == PUSH_NULL
+    return last >= 3
+            && b->b_instr[last-3].i_opcode == LOAD_GLOBAL
             && b->b_instr[last-2].i_opcode == LOAD_SMALL_INT
             && b->b_instr[last-1].i_opcode == CALL
             && b->b_instr[last].i_opcode == GET_ITER;
@@ -1985,7 +1984,21 @@ static bool is_simple_loop(cfg_builder *g, basicblock *prologue, basicblock *for
     if (!is_simple_loop_body(body, for_iter)) {
         return false;
     }
-    return has_one_jump(g, for_iter);
+    bool simple_loop_shape = prologue->b_next == for_iter
+            && for_iter->b_next == body
+            && body->b_next == epilogue
+            && for_iter->b_instr[0].i_target == epilogue
+            && basicblock_last_instr(body)->i_target == for_iter;
+    if (!simple_loop_shape) {
+        return false;
+    }
+    for (int i = 0; i < body->b_iused - 1; i++) {
+        cfg_instr inst = body->b_instr[i];
+        if (inst.i_target != NULL) {
+            return false;
+        }
+    }
+    return true;
 }
 
 static int get_loop_iteration_count(basicblock *prologue) {
@@ -2002,12 +2015,22 @@ unroll_simple_loop(cfg_builder *g, basicblock *prologue, basicblock* for_iter, b
     basicblock *unrolled = duplicate_simple_loop_body(g, body, n);
     body->b_iused = 0;
     for_iter->b_iused = 0;
-    prologue->b_iused -= 5;
+    prologue->b_iused -= 4;
     epilogue->b_instr[0].i_opcode = NOP;
     epilogue->b_instr[1].i_opcode = NOP;
 
     unrolled->b_next = epilogue;
     body->b_next = unrolled;
+
+    for (basicblock *b = g->g_entryblock; b != NULL; b = b->b_next) {
+        for (int i = 0; i < b->b_iused; i++) {
+            cfg_instr *inst = &b->b_instr[i];
+            if (inst->i_target == for_iter) {
+                inst->i_target = unrolled;
+            }
+        }
+    }
+    printf("UNROLLED\n");
 }
 
 static int is_simple_range_loop(cfg_builder *g, basicblock *prologue, basicblock *for_iter, PyObject *names, bool *res) {
@@ -2030,9 +2053,9 @@ static int is_simple_range_loop(cfg_builder *g, basicblock *prologue, basicblock
     }
     Py_XDECREF(idx);
     int last = prologue->b_iused - 1;
-    cfg_instr *load_global = &prologue->b_instr[last-4];
+    cfg_instr *load_global = &prologue->b_instr[last-3];
     assert(load_global->i_opcode == LOAD_GLOBAL);
-    if (load_global->i_oparg != arg) {
+    if (load_global->i_oparg >> 1 != arg) {
         goto is_false;
     }
 
@@ -2056,7 +2079,6 @@ static int unroll_loops(cfg_builder *g, PyObject *names) {
         RETURN_IF_ERROR(is_simple_range_loop(g, prologue, for_iter, names, &res));
         if (res) {
             unroll_simple_loop(g, prologue, for_iter, for_iter->b_next, for_iter->b_instr[0].i_target);
-            printf("UNROLLED\n");
         }
     }
     return SUCCESS;
