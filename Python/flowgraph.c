@@ -1917,77 +1917,63 @@ remove_redundant_nops_and_jumps(cfg_builder *g)
 }
 
 // LOOP UNROLLING
-static basicblock *duplicate_simple_loop_body(cfg_builder *g, basicblock *b, int n) {
-    basicblock *unrolled = cfg_builder_new_block(g);
-    int skip_last_jump = b->b_iused - 1;
-    for (int i = 0; i < n; i++) {
-            basicblock_addop(unrolled, LOAD_SMALL_INT, i, b->b_instr[0].i_loc);
-        for (int j = 0; j < skip_last_jump; j++) {
-            basicblock_insert_instruction(unrolled, i*b->b_iused+j+1, &b->b_instr[j]);
-        }
-    }
-    return unrolled;
-}
 
-static bool is_simple_loop_prologue(basicblock *b) {
-    assert(b != NULL);
-    int last = b->b_iused - 1;
+static bool
+is_simple_loop_prologue(basicblock *prologue)
+{
+    assert(prologue != NULL);
+    int last = prologue->b_iused - 1;
     return last >= 3
-            && b->b_instr[last-3].i_opcode == LOAD_GLOBAL
-            && b->b_instr[last-2].i_opcode == LOAD_SMALL_INT
-            && b->b_instr[last-1].i_opcode == CALL
-            && b->b_instr[last].i_opcode == GET_ITER;
+            && prologue->b_instr[last-3].i_opcode == LOAD_GLOBAL
+            && prologue->b_instr[last-2].i_opcode == LOAD_SMALL_INT
+            && prologue->b_instr[last-1].i_opcode == CALL
+            && prologue->b_instr[last].i_opcode == GET_ITER;
 }
 
-static bool is_simple_loop_epilogue(basicblock *b) {
-    assert(b != NULL);
-    return b->b_iused >= 2
-            && b->b_instr[0].i_opcode == END_FOR
-            && b->b_instr[1].i_opcode == POP_ITER;
+static bool
+is_simple_loop_epilogue(basicblock *epilogue)
+{
+    assert(epilogue != NULL);
+    return epilogue->b_iused >= 2
+            && epilogue->b_instr[0].i_opcode == END_FOR
+            && epilogue->b_instr[1].i_opcode == POP_ITER;
 }
 
-static bool is_simple_loop_body(basicblock *body, basicblock *for_iter) {
+static bool
+is_simple_loop_body(basicblock *body, basicblock *head)
+{
     assert(body != NULL);
-    assert(for_iter != NULL);
+    assert(head != NULL);
     cfg_instr *last = basicblock_last_instr(body);
     return last != NULL
             && last->i_opcode == JUMP
-            && last->i_target == for_iter
+            && last->i_target == head
             && body->b_instr[0].i_opcode == STORE_FAST;
 }
 
-static bool has_one_jump(cfg_builder *g, basicblock *for_iter) {
-    int cnt = 0;
-    for (basicblock *b = g->g_entryblock; b != NULL; b = b->b_next) {
-        for (int i = 0; i < b->b_iused; i++) {
-            cfg_instr *instr = &b->b_instr[i];
-            cnt += instr->i_target == for_iter;
-        }
-    }
-    return cnt == 1;
-}
-
-static bool is_simple_loop(cfg_builder *g, basicblock *prologue, basicblock *for_iter) {
-    assert(for_iter != NULL);
-    if (for_iter->b_iused != 1 || for_iter->b_instr[0].i_opcode != FOR_ITER) {
+static bool
+is_simple_loop_shape(basicblock *prologue, basicblock *head)
+{
+    assert(head != NULL);
+    if (head->b_iused != 1 || head->b_instr[0].i_opcode != FOR_ITER) {
         return false;
     }
     if (!is_simple_loop_prologue(prologue)) {
         return false;
     }
-    basicblock *epilogue = for_iter->b_instr[0].i_target;
+    basicblock *epilogue = head->b_instr[0].i_target;
     if (!is_simple_loop_epilogue(epilogue)) {
         return false;
     }
-    basicblock *body = for_iter->b_next;
-    if (!is_simple_loop_body(body, for_iter)) {
+    basicblock *body = head->b_next;
+    if (!is_simple_loop_body(body, head)) {
         return false;
     }
-    bool simple_loop_shape = prologue->b_next == for_iter
-            && for_iter->b_next == body
+    bool simple_loop_shape = prologue->b_next == head
+            && head->b_next == body
             && body->b_next == epilogue
-            && for_iter->b_instr[0].i_target == epilogue
-            && basicblock_last_instr(body)->i_target == for_iter;
+            && head->b_instr[0].i_target == epilogue
+            && basicblock_last_instr(body)->i_target == head;
     if (!simple_loop_shape) {
         return false;
     }
@@ -2000,87 +1986,93 @@ static bool is_simple_loop(cfg_builder *g, basicblock *prologue, basicblock *for
     return true;
 }
 
-static int get_loop_iteration_count(basicblock *prologue) {
+static bool
+is_simple_range_loop(basicblock *prologue, basicblock *head, int range_arg)
+{
+    if (!is_simple_loop_shape(prologue, head)) {
+        return false;
+    }
+    cfg_instr *load_global = &prologue->b_instr[prologue->b_iused-4];
+    assert(load_global->i_opcode == LOAD_GLOBAL);
+    return load_global->i_oparg >> 1 == range_arg;
+}
+
+static int
+get_loop_iteration_count(basicblock *prologue)
+{
     assert(prologue != NULL);
-    int last = prologue->b_iused - 1;
-    cfg_instr *load_small_int = &prologue->b_instr[last-2];
+    cfg_instr *load_small_int = &prologue->b_instr[prologue->b_iused-3];
     assert(load_small_int->i_opcode == LOAD_SMALL_INT);
     return load_small_int->i_oparg;
 }
 
-static void
-unroll_simple_loop(cfg_builder *g, basicblock *prologue, basicblock* for_iter, basicblock *body, basicblock *epilogue) {
+static int
+unroll_loop_body(cfg_builder *g, basicblock *body, int n, basicblock **unrolled)
+{
+    basicblock *result = cfg_builder_new_block(g);
+    if (result == NULL) {
+        return ERROR;
+    }
+    for (int i = 0; i < n; i++) {
+            RETURN_IF_ERROR(basicblock_addop(result, LOAD_SMALL_INT, i, body->b_instr[0].i_loc));
+        for (int j = 1; j < body->b_iused; j++) {
+            RETURN_IF_ERROR(basicblock_insert_instruction(result, i*body->b_iused+j, &body->b_instr[j-1]));
+        }
+    }
+    *unrolled = result;
+    return SUCCESS;
+}
+
+static int
+unroll_simple_loop(cfg_builder *g, basicblock *prologue, basicblock* head, basicblock *body, basicblock *epilogue)
+{
     int n = get_loop_iteration_count(prologue);
-    basicblock *unrolled = duplicate_simple_loop_body(g, body, n);
+    basicblock *unrolled;
+    RETURN_IF_ERROR(unroll_loop_body(g, body, n, &unrolled));
     body->b_iused = 0;
-    for_iter->b_iused = 0;
+    head->b_iused = 0;
     prologue->b_iused -= 4;
     epilogue->b_instr[0].i_opcode = NOP;
     epilogue->b_instr[1].i_opcode = NOP;
 
     unrolled->b_next = epilogue;
     body->b_next = unrolled;
-
-    for (basicblock *b = g->g_entryblock; b != NULL; b = b->b_next) {
-        for (int i = 0; i < b->b_iused; i++) {
-            cfg_instr *inst = &b->b_instr[i];
-            if (inst->i_target == for_iter) {
-                inst->i_target = unrolled;
-            }
-        }
-    }
+    return SUCCESS;
 }
 
-static int is_simple_range_loop(cfg_builder *g, basicblock *prologue, basicblock *for_iter, PyObject *names, bool *res) {
-    if (!is_simple_loop(g, prologue, for_iter)) {
-        goto is_false;
+static int
+unroll_loops(cfg_builder *g, PyObject *names)
+{
+    if (names == NULL) {
+        return SUCCESS;
     }
     PyObject *idx;
     PyObject *range_name = PyUnicode_FromString("range");
+    if (range_name == NULL) {
+        return ERROR;
+    }
     int err = PyDict_GetItemRef(names, range_name, &idx);
-
     Py_DECREF(range_name);
     if (idx == NULL) {
         if (err == -1)
             return ERROR;
-        goto is_false;
+        return SUCCESS;
     }
     int arg = PyLong_AsInt(idx);
     if (arg == -1 && PyErr_Occurred()) {
         return ERROR;
     }
-    Py_XDECREF(idx);
-    int last = prologue->b_iused - 1;
-    cfg_instr *load_global = &prologue->b_instr[last-3];
-    assert(load_global->i_opcode == LOAD_GLOBAL);
-    if (load_global->i_oparg >> 1 != arg) {
-        goto is_false;
-    }
-
-    *res = true;
-    return SUCCESS;
-
-is_false:
-    *res = false;
-    return SUCCESS;
-}
-
-static int unroll_loops(cfg_builder *g, PyObject *names) {
-    if (names == NULL) {
-        return SUCCESS;
-    }
     basicblock *prologue = g->g_entryblock;
     assert(prologue != NULL);
-    basicblock *for_iter = prologue->b_next;
-    bool res;
-    for (;for_iter != NULL; prologue = for_iter, for_iter = for_iter->b_next) {
-        RETURN_IF_ERROR(is_simple_range_loop(g, prologue, for_iter, names, &res));
-        if (res) {
-            unroll_simple_loop(g, prologue, for_iter, for_iter->b_next, for_iter->b_instr[0].i_target);
+    basicblock *head = prologue->b_next;
+    for (;head != NULL; prologue = head, head = head->b_next) {
+        if (is_simple_range_loop(prologue, head, arg)) {
+            RETURN_IF_ERROR(unroll_simple_loop(g, prologue, head, head->b_next, head->b_instr[0].i_target));
         }
     }
     return SUCCESS;
 }
+
 // LOOP UNROLLING
 
 
