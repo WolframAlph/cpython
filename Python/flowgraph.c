@@ -1919,12 +1919,11 @@ remove_redundant_nops_and_jumps(cfg_builder *g)
 // LOOP UNROLLING
 static basicblock *duplicate_simple_loop_body(cfg_builder *g, basicblock *b, int n) {
     basicblock *unrolled = cfg_builder_new_block(g);
+    int skip_last_jump = b->b_iused - 1;
     for (int i = 0; i < n; i++) {
             basicblock_addop(unrolled, LOAD_SMALL_INT, i, b->b_instr[0].i_loc);
-        int skip_last_jump = b->b_iused - 1;
         for (int j = 0; j < skip_last_jump; j++) {
-            cfg_instr *inst = &b->b_instr[j];
-            basicblock_addop(unrolled, inst->i_opcode, inst->i_oparg, inst->i_loc);
+            basicblock_insert_instruction(unrolled, i*b->b_iused+j+1, &b->b_instr[j]);
         }
     }
     return unrolled;
