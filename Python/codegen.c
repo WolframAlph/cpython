@@ -5356,6 +5356,15 @@ codegen_slice(compiler *c, expr_ty s)
 #define MATCH_VALUE_EXPR(N) \
     ((N)->kind == Constant_kind || (N)->kind == Attribute_kind)
 
+// Expressions such as '1+2j' or '1-2j'
+#define COMPLEX_BINOP_CHECK(N) \
+    ((N)->kind == BinOp_kind \
+     && ((N)->v.BinOp.op == Add || (N)->v.BinOp.op == Sub) \
+     && (N)->v.BinOp.left->kind == Constant_kind \
+     && (N)->v.BinOp.right->kind == Constant_kind \
+     && (PyComplex_CheckExact((N)->v.BinOp.left->v.Constant.value) \
+         || PyComplex_CheckExact((N)->v.BinOp.right->v.Constant.value)))
+
 // Allocate or resize pc->fail_pop to allow for n items to be popped on failure.
 static int
 ensure_fail_pop(compiler *c, pattern_context *pc, Py_ssize_t n)
@@ -6019,11 +6028,23 @@ codegen_pattern_value(compiler *c, pattern_ty p, pattern_context *pc)
 {
     assert(p->kind == MatchValue_kind);
     expr_ty value = p->v.MatchValue.value;
-    if (!MATCH_VALUE_EXPR(value)) {
+    if (COMPLEX_BINOP_CHECK(value)) {
+        PyObject *left = value->v.BinOp.left->v.Constant.value;
+        PyObject *right = value->v.BinOp.right->v.Constant.value;
+        PyObject *result = value->v.BinOp.op == Add ?
+            PyNumber_Add(left, right) : PyNumber_Subtract(left, right);
+        if (result == NULL) {
+            return ERROR;
+        }
+        ADDOP_LOAD_CONST(c, LOC(value), result);
+    }
+    else if (!MATCH_VALUE_EXPR(value)) {
         const char *e = "patterns may only match literals and attribute lookups";
         return _PyCompile_Error(c, LOC(p), e);
     }
-    VISIT(c, expr, value);
+    else {
+        VISIT(c, expr, value);
+    }
     ADDOP_COMPARE(c, LOC(p), Eq);
     ADDOP(c, LOC(p), TO_BOOL);
     RETURN_IF_ERROR(jump_to_fail_pop(c, LOC(p), pc, POP_JUMP_IF_FALSE));
