@@ -6029,17 +6029,7 @@ codegen_pattern_value(compiler *c, pattern_ty p, pattern_context *pc)
 {
     assert(p->kind == MatchValue_kind);
     expr_ty value = p->v.MatchValue.value;
-    if (is_complex_binop(value)) {
-        // A complex literal (e.g. 1+2j) is a valid expression that
-        // can appear as a pattern in a case statement. However,
-        // complex literals are represented as a binary operation in
-        // the AST, which is not a valid expression in a case
-        // statement so we need to handle them specially here.
-        VISIT(c, expr, value->v.BinOp.left);
-        VISIT(c, expr, value->v.BinOp.right);
-        ADDOP_BINARY(c, LOC(value), value->v.BinOp.op);
-    }
-    else if (MATCH_VALUE_EXPR(value)) {
+    if (MATCH_VALUE_EXPR(value) || is_complex_binop(value)) {
         VISIT(c, expr, value);
     }
     else {
