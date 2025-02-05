@@ -5366,7 +5366,6 @@ static inline bool is_complex_binop(expr_ty e) {
           || PyComplex_CheckExact(e->v.BinOp.right->v.Constant.value));
 }
 
-
 // Allocate or resize pc->fail_pop to allow for n items to be popped on failure.
 static int
 ensure_fail_pop(compiler *c, pattern_context *pc, Py_ssize_t n)
@@ -6040,12 +6039,12 @@ codegen_pattern_value(compiler *c, pattern_ty p, pattern_context *pc)
         VISIT(c, expr, value->v.BinOp.right);
         ADDOP_BINARY(c, LOC(value), value->v.BinOp.op);
     }
-    else if (!MATCH_VALUE_EXPR(value)) {
-        const char *e = "patterns may only match literals and attribute lookups";
-        return _PyCompile_Error(c, LOC(p), e);
+    else if (MATCH_VALUE_EXPR(value)) {
+        VISIT(c, expr, value);
     }
     else {
-        VISIT(c, expr, value);
+        const char *e = "patterns may only match literals and attribute lookups";
+        return _PyCompile_Error(c, LOC(p), e);
     }
     ADDOP_COMPARE(c, LOC(p), Eq);
     ADDOP(c, LOC(p), TO_BOOL);
