@@ -5362,8 +5362,9 @@ static inline bool is_complex_binop(expr_ty e) {
       && (e->v.BinOp.op == Add || e->v.BinOp.op == Sub)
       && e->v.BinOp.left->kind == Constant_kind
       && e->v.BinOp.right->kind == Constant_kind
-      && (PyComplex_CheckExact(e->v.BinOp.left->v.Constant.value)
-          || PyComplex_CheckExact(e->v.BinOp.right->v.Constant.value));
+      && (PyLong_CheckExact(e->v.BinOp.left->v.Constant.value)
+          || PyFloat_CheckExact(e->v.BinOp.left->v.Constant.value))
+      && PyComplex_CheckExact(e->v.BinOp.right->v.Constant.value);
 }
 
 // Allocate or resize pc->fail_pop to allow for n items to be popped on failure.
